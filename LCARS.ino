@@ -1,6 +1,7 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
 #include "DFRobotDFPlayerMini.h"
+#include "EEPROM.h"
 
 
 #define DEBUG 1
@@ -27,18 +28,30 @@ const int photonRightPin = 11;    //  photon torpedo - right (PWM)
 const int strobeLightPin  =   12;   //   strobe light sequence ( flash )
 const int spotLightPin = 13;        //     Spot lights
 
-const int demoButtonPin = 16;      // a2
+const int warpButtonPin = 16;      // a2
 const int photonButtonPin = 17;      // a3
 const int modeButtonPin = 18;      // a4
 const int audioRxPin = 15;
 const int audioTxPin = 14;
 
+  // restore saved settings from EEPROM
+const int EEPROM_ADDRESS_VOLUME = 0;
+const int EEPROM_ADDRESS_POWERSAVE_MINS = 1;
+const int EEPROM_ADDRESS_RETRO_SOUNDS = 2 ;
+
 /*
-  Inputs
-    A2 - demo mode sequence start/stop
-    A3 - static steady / impulse / warp
-    A4 - photon torpedos fire sequence
+    On Sequence - sync to star trek theme
+
+    00.0 - all off
+    02.0 - navigation lights
+    03.5 - strobe lights
+    05.0 - cabin lights & spotlights
+    07.0 - bring dish up from off to yellow @ 10.0 
+
 */
+
+
+
 
 /*
     Proposed demo sequence
@@ -59,14 +72,6 @@ const int audioTxPin = 14;
 */
 
 //=================================================================================================
-//  State Information
-//=================================================================================================
-
-bool impulseMode = true;
-typedef enum { PHOTON_INACTIVE=0, PHOTON_LEFT, PHOTON_RIGHT } PhotonState;
-PhotonState photonState = PHOTON_INACTIVE;   // no firing
-
-//=================================================================================================
 //
 // Audio Playback - DFPlayer
 //
@@ -75,7 +80,51 @@ SoftwareSerial mySoftwareSerial(audioRxPin, audioTxPin); // RX, TX
 DFRobotDFPlayerMini myDFPlayer;
 
 //=================================================================================================
-//  Button - button with debouce functionality
+//  Timer - simple poll based timer
+//
+//  Usage:  1. Allocate Timer
+//          2. startTimer
+//          3. Call timerCheck - returns true on a timer fire
+//=================================================================================================
+typedef struct Timer {
+  unsigned long timeStamp;
+  unsigned long duration;
+  bool continuous;
+} Timer;
+
+// initialise the timer and commence timing
+void timerStart(Timer *timer, unsigned long duration,bool continuous )
+{
+  timer->timeStamp = millis();
+  timer->duration = duration;
+  timer->continuous = continuous;
+}
+
+void timerStop(Timer *timer)
+{
+  timer->duration = -1;
+}
+
+// check timer expired - returns true on fire
+bool timerCheck(Timer *timer) {
+  // if timer is running
+  if( timer->duration > 0 ) { 
+    // has timer has fired
+    if( (millis() - timer->timeStamp) > timer->duration ) {
+      if( timer->continuous ) {
+        timer->timeStamp = millis();
+      } else {
+        timer->duration = -1;   // timer now disabled
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+
+//=================================================================================================
+//  Button - button with debouce 
 //
 //  Usage:  1. Allocate Button
 //          2. buttonInit
@@ -174,6 +223,10 @@ void startPinAnimation(struct PinAnimation *pinAnimation) {
   Serial.print("Starting animation for ");
   Serial.println( animation->pin );
 #endif
+}
+
+void stopPinAnimation(struct PinAnimation *pinAnimation) {
+  pinAnimation->active = false;
 }
 
 
@@ -281,7 +334,7 @@ PinAnimation strobePinAnim = {
 
 // ---------------- Warp Animations -------------------
 long warpAnimDurations[] = { 1000, 1000, -1};
-int warpAnimValues[] =     { 128, 255, 0 };
+int warpAnimValues[] =     { 128, 255, 128 };
 
 PinAnimation warpEngineAnim = {
   warpEnginePin,      // pin
@@ -355,6 +408,12 @@ void animateDishYellowBlue() {
   startPinAnimation( &dishAnimBlue );
 }
 
+void turnOffDish() {
+  analogWrite( dishBluePin, 0 );
+  analogWrite( dishRedPin, 0 );
+  analogWrite( dishGreenPin, 0 );
+}
+
 
 void setImpulseMode() {
    digitalWrite( impulsePin, 255);
@@ -367,6 +426,7 @@ void setWarpMode() {
    digitalWrite( impulsePin, 0);
    animateDishYellowBlue();
    startPinAnimation( &warpEngineAnim );
+   myDFPlayer.play(3); //play SD:/MP3/0003.mp3
 }
 
 // ---------------- Photon Torpedo Animations -------------------
@@ -384,6 +444,33 @@ PinAnimation photonPinAnim = {
   photonPinDurations,    // durations
   photonPinValues        // values
 };
+
+
+//=================================================================================================
+//  State Information
+//=================================================================================================
+
+bool impulseMode = true;
+typedef enum { PHOTON_INACTIVE=0, PHOTON_LEFT, PHOTON_RIGHT } PhotonState;
+PhotonState photonState = PHOTON_INACTIVE;   // no firing
+enum { STATE_DEMO=0, STATE_INTRO, STATE_IDLE, STATE_WARP, STATE_POWERSAVE } state;
+
+// Settings - pulled from EEPROM
+byte volume;
+byte powerSaveMinutes;
+byte retroSounds;
+
+// Timers
+
+Timer stateTimer;
+Timer powerSaveTimer;
+
+// Buttons
+
+Button modeButton;
+Button photonButton;
+Button warpButton;
+
 
 
 void launchPhoton() {
@@ -408,14 +495,24 @@ void launchPhoton() {
   }  
 }
 
-//=================================================================================================
-//
-//  Button Definitions
-//
-//=================================================================================================
-Button demoButton;
-Button photonButton;
-Button modeButton;
+
+void enterPowerSaveMode()
+{
+  turnOffDish();
+  stopPinAnimation( &strobePinAnim );
+  digitalWrite( cabinLightPin , LOW );
+  digitalWrite( spotLightPin, LOW );  
+}
+
+void exitPowerSaveMode()
+{
+  setImpulseMode();
+  startPinAnimation( &strobePinAnim );
+  digitalWrite( cabinLightPin , HIGH );
+  digitalWrite( spotLightPin, HIGH );
+}
+
+
 
 
 //=================================================================================================
@@ -431,6 +528,17 @@ void setup() {
   Serial.println("Setting up...");
 #endif
 
+  // restore saved settings from EEPROM
+  volume = EEPROM.read( EEPROM_ADDRESS_VOLUME );
+  if( volume == 255 ) volume = 15;          // setup volume to default value 15 (mid volume)
+  
+  powerSaveMinutes = EEPROM.read( EEPROM_ADDRESS_POWERSAVE_MINS );
+  if( powerSaveMinutes == 255 ) powerSaveMinutes = 2;   // default to 2 minutes for power save timer
+
+  retroSounds = EEPROM.read( EEPROM_ADDRESS_RETRO_SOUNDS );
+  if( retroSounds == 255 ) retroSounds = 1;         // default value (retrosounds to be used)
+
+  // set initial pin values
   pinMode( navPinAnim.pin, OUTPUT );
   startPinAnimation( &navPinAnim );
   pinMode( strobePinAnim.pin, OUTPUT );
@@ -442,7 +550,7 @@ void setup() {
   analogWrite( warpEnginePin, 0 );
   setImpulseMode();
 
-  buttonInit(&demoButton, demoButtonPin);
+  buttonInit(&warpButton, warpButtonPin);
   buttonInit(&photonButton, photonButtonPin);
   buttonInit(&modeButton, modeButtonPin);
 
@@ -455,12 +563,16 @@ void setup() {
     return;
   }
   myDFPlayer.setTimeOut(500);
-  myDFPlayer.volume(30);    // maximum volume
+  myDFPlayer.volume(volume);    // maximum volume (0-30)
   myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);    // nomal equaliser
   myDFPlayer.outputDevice(DFPLAYER_DEVICE_SD);    // using an SD
   // play the intro 0001intro.mp3
   myDFPlayer.play(1); //play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)
-  
+
+  state = STATE_INTRO;
+  timerStart( &stateTimer, 10000, false);
+  timerStart( &powerSaveTimer, powerSaveMinutes*1000, false); 
+
   // startPinAnimation(&photonPinAnim);
 
 //  analogWrite( dishBluePin, 0 );
@@ -484,31 +596,79 @@ void setup() {
     dish does full blue, impulse engines fade, warp engines blue
 */
 
-
 //=================================================================================================
 //
 //  Loop
 //
 //=================================================================================================
 void loop() {
-  if( buttonCheck(&demoButton) && demoButton.pressed ) {
-  }
-  if( buttonCheck(&photonButton) && photonButton.pressed ) {
-#if DEBUG
-  Serial.println("Photon Launched");
+
+  // check button status
+  bool modePressed = buttonCheck(&modeButton) && modeButton.pressed;
+  bool photonPressed = buttonCheck(&photonButton) && photonButton.pressed;
+  bool warpPressed = buttonCheck(&warpButton) && warpButton.pressed;
+
+
+
+  switch( state ) {
+  case STATE_INTRO:
+    // wait for intro sequence to complete
+    if( timerCheck( &stateTimer ) ) {
+      // move to idle
+      state = STATE_IDLE;
+#ifdef DEBUG
+    Serial.println("Intro->Idle");
 #endif
-    launchPhoton();
-  }
-  if( buttonCheck(&modeButton) && modeButton.pressed ) {
-#if DEBUG
-  Serial.println("Mode Press");
-#endif
-    impulseMode = !impulseMode;
-    if( impulseMode ) {
-      setImpulseMode();
-    } else {
-      setWarpMode();
+
     }
+    break;
+  case STATE_IDLE:
+    if( timerCheck(&powerSaveTimer) ) {
+#ifdef DEBUG
+    Serial.println("Idle->Powersave");
+#endif
+      enterPowerSaveMode();
+      state = STATE_POWERSAVE;
+      break;
+    }
+    if( photonPressed ) {
+      launchPhoton();
+    }
+    if( warpPressed ) {
+      // enter warp mode and set timer to return to idle
+      setWarpMode();
+      timerStart( &stateTimer, 31000, false );
+      state = STATE_WARP;
+#ifdef DEBUG
+    Serial.println("Idle->Warp");
+#endif
+    }    
+    break;
+  case STATE_WARP:
+    if( timerCheck(&stateTimer) ) {
+       setImpulseMode();
+       state = STATE_IDLE;
+#ifdef DEBUG
+    Serial.println("Warp->Idle");
+#endif
+    }
+    break;
+  case STATE_POWERSAVE:
+    // we are in powersave, if any buttons pressed, return to idle
+    if( modePressed || photonPressed || warpPressed ) {
+      exitPowerSaveMode();
+      state = STATE_IDLE;
+#ifdef DEBUG
+    Serial.println("Powersave->Idle");
+#endif
+    }  
+    break;  
+  }  
+  // any button pressed, restart our powersave timer
+  if( modePressed || photonPressed || warpPressed ) {
+    timerStart( &powerSaveTimer, powerSaveMinutes*1000, false); 
   }
+
+  
   animatePins();
 }
