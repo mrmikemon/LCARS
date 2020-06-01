@@ -168,6 +168,8 @@ bool buttonCheck(struct Button *button) {
   return false; // not held long enough, no press
 }
 
+
+
 //=================================================================================================
 //
 // PinAnimation
@@ -408,12 +410,30 @@ void animateDishYellowBlue() {
   startPinAnimation( &dishAnimBlue );
 }
 
+
 void turnOffDish() {
   analogWrite( dishBluePin, 0 );
   analogWrite( dishRedPin, 0 );
   analogWrite( dishGreenPin, 0 );
 }
 
+void dishRed() {
+  analogWrite( dishBluePin, 0 );
+  analogWrite( dishRedPin, 255 );
+  analogWrite( dishGreenPin, 0 );
+}
+
+void dishBlue() {
+  analogWrite( dishBluePin, 255 );
+  analogWrite( dishRedPin, 0 );
+  analogWrite( dishGreenPin, 0 );
+}
+
+void dishGreen() {
+  analogWrite( dishBluePin, 0 );
+  analogWrite( dishRedPin, 0 );
+  analogWrite( dishGreenPin, 255 );
+}
 
 void setImpulseMode() {
    digitalWrite( impulsePin, 255);
@@ -453,8 +473,9 @@ PinAnimation photonPinAnim = {
 bool impulseMode = true;
 typedef enum { PHOTON_INACTIVE=0, PHOTON_LEFT, PHOTON_RIGHT } PhotonState;
 PhotonState photonState = PHOTON_INACTIVE;   // no firing
-enum { STATE_DEMO=0, STATE_INTRO, STATE_IDLE, STATE_WARP, STATE_POWERSAVE } state;
+enum { STATE_DEMO=0, STATE_INTRO, STATE_IDLE, STATE_WARP, STATE_POWERSAVE, STATE_PREFERENCES } state;
 
+enum { PREF_VOLUME=0, PREF_POWERSAVE, PREF_RETRO_SOUND } currentPreference;
 // Settings - pulled from EEPROM
 byte volume;
 byte powerSaveMinutes;
@@ -470,7 +491,6 @@ Timer powerSaveTimer;
 Button modeButton;
 Button photonButton;
 Button warpButton;
-
 
 
 void launchPhoton() {
@@ -512,6 +532,46 @@ void exitPowerSaveMode()
   digitalWrite( spotLightPin, HIGH );
 }
 
+void enterPreferencesMode() {
+  state = STATE_PREFERENCES;
+  currentPreference = PREF_VOLUME;
+  showPreferenceMode();
+}
+
+bool selectNextPreference() {
+  bool finished = false;
+  switch( currentPreference ) {
+    case PREF_VOLUME:
+      currentPreference = PREF_POWERSAVE;
+      break;
+    case PREF_POWERSAVE:
+      currentPreference = PREF_RETRO_SOUND;
+      break;
+    case PREF_RETRO_SOUND:
+      finished = true;
+      break;
+  }
+  showPreferenceMode();  
+  return finished;
+}
+
+void showPreferenceMode() {  
+  switch( currentPreference ) {
+    case PREF_VOLUME:
+       dishRed();
+      break;
+    case PREF_POWERSAVE:
+       dishGreen();
+      break;
+    case PREF_RETRO_SOUND:
+      dishBlue();
+      break;
+  }
+}
+
+void selectNextPreferenceValue() {
+
+}
 
 
 
@@ -571,7 +631,7 @@ void setup() {
 
   state = STATE_INTRO;
   timerStart( &stateTimer, 10000, false);
-  timerStart( &powerSaveTimer, powerSaveMinutes*1000, false); 
+  timerStart( &powerSaveTimer, powerSaveMinutes*60000, false); 
 
   // startPinAnimation(&photonPinAnim);
 
@@ -608,8 +668,6 @@ void loop() {
   bool photonPressed = buttonCheck(&photonButton) && photonButton.pressed;
   bool warpPressed = buttonCheck(&warpButton) && warpButton.pressed;
 
-
-
   switch( state ) {
   case STATE_INTRO:
     // wait for intro sequence to complete
@@ -631,8 +689,17 @@ void loop() {
       state = STATE_POWERSAVE;
       break;
     }
+    if( photonPressed && modeButton.pressed ) {
+      // enter a settings mode
+#ifdef DEBUG
+    Serial.println("Idle->Preferences");
+#endif
+      enterPreferencesMode();
+      break;
+    }
     if( photonPressed ) {
       launchPhoton();
+      break;
     }
     if( warpPressed ) {
       // enter warp mode and set timer to return to idle
@@ -662,11 +729,36 @@ void loop() {
     Serial.println("Powersave->Idle");
 #endif
     }  
-    break;  
+    break;
+  case STATE_PREFERENCES:
+    if( timerCheck( &stateTimer ) ) {
+#ifdef DEBUG
+    Serial.println("Preferences->Idle");
+#endif
+      // timer fired, return to our idle state
+      state = STATE_IDLE;
+      setImpulseMode();
+      break;
+    }
+    if( modePressed ) {
+      // select next preference, if no more prefs - exist preferences mode
+      if( selectNextPreference() ) {
+#ifdef DEBUG
+        Serial.println("Preferences->Idle");
+#endif
+        state = STATE_IDLE;
+        setImpulseMode();
+        break;
+      }
+    }
+    if( photonPressed ) {
+        selectNextPreferenceValue();
+    }
+    break;
   }  
   // any button pressed, restart our powersave timer
   if( modePressed || photonPressed || warpPressed ) {
-    timerStart( &powerSaveTimer, powerSaveMinutes*1000, false); 
+    timerStart( &powerSaveTimer, powerSaveMinutes*60000, false); 
   }
 
   
