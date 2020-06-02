@@ -5,7 +5,7 @@
 
 
 #define DEBUG 1
-// #define DEBUG_ANIM 1
+#define ANIM_DEBUG 1
 
 /*
   LCARS Control Program
@@ -168,26 +168,28 @@ bool buttonCheck(struct Button *button) {
   return false; // not held long enough, no press
 }
 
-
-
 //=================================================================================================
 //
 // PinAnimation
 //
 //=================================================================================================
+typedef byte PinValues[3];
+
+
 typedef struct PinAnimation {
   // user setable values
-  int pin;                  // pin to animate
+  int pinCount;             // number of pins in animation
+  int pins[3];                // pins to animate
   bool autoRepeat;          // animation auto repeats
   bool isAnalog;            // select if values are analog (0..255) or digital 0..1
   bool active;              // animation is active
   bool smoothAnimation;     // if using smooth, animator interpolates between values
   long *times;               // array of animation delay durations in milliseconds. -1 indicates end of animation
-  int  *values;              // array of values for pin digital or analog value
+  PinValues *values;         // array of values for pin digital or analog value
 
   // working values - used by the animator
   int currentStep;
-  int currentValue;
+  PinValues currentValues;     // value for interpolation
   unsigned long stepTimestamp;  // timestamp of last step executed
 } PinAnimation;
 
@@ -214,17 +216,36 @@ void startPinAnimation(struct PinAnimation *pinAnimation) {
   }
   // initalise values for the animation
   animation->currentStep = 0;
-  if ( animation->isAnalog ) {
-    animation->currentValue = analogRead( animation->pin );
-  } else {
-    animation->currentValue = digitalRead( animation->pin );
+  // for each pin
+  for( int pin=0 ; pin < animation->pinCount ; pin++ ) {
+    if ( animation->isAnalog ) {
+      animation->currentValues[pin] = animation->values[0][pin];
+    } else {
+      animation->currentValues[pin] = animation->values[0][pin];
+    }
+    animation->stepTimestamp = millis();
+    animation->active = true;
   }
-  animation->stepTimestamp = millis();
-  animation->active = true;
-#if DEBUG_ANIM
-  Serial.print("Starting animation for ");
-  Serial.println( animation->pin );
+#ifdef ANIM_DEBUG
+  Serial.print("Animation for pins: ");
+  for( int pin=0; pin < animation->pinCount ; pin++ ) {
+    Serial.print( animation->pins[pin] );
+  }
+  Serial.println();
+  Serial.println("Steps");
+  for( int index = 0; 1 ; index++ ) {
+    long duration = animation->times[index];
+    if( duration < 0 ) break;
+    Serial.print(duration);
+    Serial.print(": ");
+    for(int i=0;i<animation->pinCount;i++) {
+      Serial.print( animation->values[index][i] );
+      Serial.print(", ");
+    }
+    Serial.println();
+  }
 #endif
+ 
 }
 
 void stopPinAnimation(struct PinAnimation *pinAnimation) {
@@ -243,57 +264,57 @@ void animatePins() {
     // skip inactive anmiations
     if ( !anim->active ) continue;
 
+    // update the current step
     int duration = anim->times[anim->currentStep];
-    // check if animation has completed, make inactive
-    if ( duration < 0 ) {
-      // if this animation is an auto repeat, restart it
-      if( anim->autoRepeat ) {
-        anim->currentStep = 0;
-#if DEBUG_ANIM
-        Serial.print("Pin Animation: ");
-        Serial.print( anim->pin);
-        Serial.println(" restarting");
-#endif
-      } else {
-        anim->active = false;
-#if DEBUG_ANIM
-        Serial.print("Pin Animation: ");
-        Serial.print( anim->pin);
-        Serial.println(" finished");
-#endif
-        continue;
-      }
-    }
-    int targetValue = anim->values[anim->currentStep];
-
-    // handle smooth animations differently from discrete values
-    if ( anim->smoothAnimation ) {
-      // using the timestamp, interpolate to the required value and update
-      long dT = currentTimestamp - anim->stepTimestamp;
-      long dV = ((targetValue - anim->currentValue) * dT) / duration;
-#if DEBUG_ANIM
-      Serial.print( "Smooth anim( dT: ");
-      Serial.print(dT);
-      Serial.print(" value:");
-      Serial.println( anim->currentValue + dV );
-#endif
-      analogWrite( anim->pin, anim->currentValue + dV );
-    }
-
-    // check if duration has been reached on animation, if so then set the new value
-    if ( currentTimestamp - anim->stepTimestamp > duration ) {
-      // change if required
-      if ( anim->currentValue != targetValue ) {
-        if ( anim->isAnalog ) {
-          analogWrite( anim->pin, targetValue );
-        } else {
-          digitalWrite( anim->pin, targetValue );
-        }
-        anim->currentValue = targetValue;
-      }
+    if ( currentTimestamp > (anim->stepTimestamp + duration) ) {
       // update to the next step in our animation
       anim->stepTimestamp = currentTimestamp;
+      for( int pin=0; pin < anim->pinCount ; pin++ ) {
+        anim->currentValues[pin] = anim->values[anim->currentStep][pin];
+      }
       anim->currentStep++;
+      // get the next duration
+      duration = anim->times[anim->currentStep];
+      // check if animation has completed, make inactive
+      if ( duration < 0 ) {
+        // if this animation is an auto repeat, restart it
+        if( anim->autoRepeat ) {
+          anim->currentStep = 0;
+        } else {
+          anim->active = false;
+          continue;
+        }
+      }
+    }
+    
+    for(int pin=0; pin< anim->pinCount ; pin++ ) {
+      int targetValue = anim->values[anim->currentStep][pin];
+
+      // handle smooth animations differently from discrete values
+      if ( anim->smoothAnimation ) {
+        // using the timestamp, interpolate to the required value and update
+        long dT = currentTimestamp - anim->stepTimestamp;
+        int currentValue = anim->currentValues[pin];
+        long dV = ((targetValue - currentValue ) * dT) / duration;
+#ifdef ANIM_DEBUG
+        Serial.print("Pin: ");
+        Serial.print(anim->pins[pin]);
+        Serial.print("[ ");
+        Serial.print( targetValue ); 
+        Serial.print(":");
+        Serial.print( currentValue + dV ); 
+        Serial.print("] ");
+        Serial.print(" dt: ");
+        Serial.print(dT);
+        Serial.print(" dv: ");
+        Serial.println(dV);
+
+#endif
+        analogWrite( anim->pins[pin], currentValue + dV );
+      }  else {
+//      Serial.print( targetValue ); 
+        digitalWrite( anim->pins[pin], targetValue );
+      }
     }
   }
 }
@@ -307,12 +328,13 @@ void animatePins() {
 
 // ---------------- Nav & Strobe Animations -------------------
 long navPinDurations[] ={ 0,  900,  900,  -1 };   // timing
-int navPinValues[] =    { 0,    1,    0,   0 };    // values
+PinValues navPinValues[] = { {0}, {1}, {0}, {0} };    // values
 
 PinAnimation navPinAnim = {
-  navLightPin,      // pin
+  1,                 // pinCount
+  { navLightPin },      // pin
   true,   // auto repeat
-  false,  // digital on/off
+  false,  // digital (not analog) 
   true,   // active
   false,  // no smooth animation
   navPinDurations,    // durations
@@ -320,13 +342,14 @@ PinAnimation navPinAnim = {
 };
 
 
-long strobePinDurations[] ={ 100,  700,  -1 };   // timing
-int strobePinValues[] =    { 0,    1,   0 };    // values
+long strobePinDurations[] = { 100,  700,  -1 };   // timing
+PinValues strobePinValues[] = { {1},  {0},   {0} };    // values
 
 PinAnimation strobePinAnim = {
-  strobeLightPin,      // pin
+  1,                 // pinCount
+  {strobeLightPin},      // pin
   true,   // auto repeat
-  false,  // digital on/off
+  false,  // digital (not analog) 
   true,   // active
   false,  // no smooth animation
   strobePinDurations,    // durations
@@ -336,10 +359,11 @@ PinAnimation strobePinAnim = {
 
 // ---------------- Warp Animations -------------------
 long warpAnimDurations[] = { 1000, 1000, -1};
-int warpAnimValues[] =     { 128, 255, 128 };
+PinValues warpAnimValues[] =  { {128}, {255}, {0} };
 
 PinAnimation warpEngineAnim = {
-  warpEnginePin,      // pin
+  1,                 // pinCount
+  { warpEnginePin },      // pin
   true,   // auto repeat
   false,  // digital on/off
   true,   // active
@@ -351,63 +375,31 @@ PinAnimation warpEngineAnim = {
 
 
 // ---------------- Dish Animations -------------------
-long dishAnimDurations[] = {   0, 2000, -1 };
-int dishYellowBlueValuesR[] =  {  255,  0, 0 };
-int dishYellowBlueValuesG[] =  {  255,  0, 0 };
-int dishYellowBlueValuesB[] =  {  0,  255, 0 };
+long dishAnimDurations[] = { 0 , 2000, -1 };a
+PinValues dishBlueYellowValues[] = { {0,0,255},  {255,255,0}, {0,0,0} };
+PinValues dishYellowBlueValues[] = { {255,255,0},{0, 0 ,255}, {0,0,0} };
 
-int dishBlueYellowValuesR[] =  {    0,  255, 0 };
-int dishBlueYellowValuesG[] =  {    0,  255, 0 };
-int dishBlueYellowValuesB[] =  {  255,  0, 0 };
-
-PinAnimation dishAnimRed = {
-  dishRedPin,      // pin
+PinAnimation dishAnim = {
+  3,              // pinCount
+  {dishRedPin, dishGreenPin, dishBluePin },      // pins
   false,   // auto repeat
   false,  // digital on/off
   true,   // active
   true,  // no smooth animation
   dishAnimDurations,    // durations
-  dishYellowBlueValuesR        // values
+  dishYellowBlueValues        // values
 };
 
-PinAnimation dishAnimGreen = {
-  dishGreenPin,      // pin
-  false,   // auto repeat
-  false,  // digital on/off
-  true,   // active
-  true,  // no smooth animation
-  dishAnimDurations,    // durations
-  dishYellowBlueValuesG        // values
-};
-
-PinAnimation dishAnimBlue = {
-  dishBluePin,      // pin
-  false,   // auto repeat
-  false,  // digital on/off
-  true,   // active
-  true,  // no smooth animation
-  dishAnimDurations,    // durations
-  dishYellowBlueValuesB        // values
-};
-
-void animateDishBlueYellow() {
+void animateDishYellow() {
   // setup values and start/restart the dish animation
-  dishAnimRed.values = dishBlueYellowValuesR;
-  dishAnimGreen.values = dishBlueYellowValuesG;
-  dishAnimBlue.values = dishBlueYellowValuesB;
-  startPinAnimation( &dishAnimRed );
-  startPinAnimation( &dishAnimGreen );
-  startPinAnimation( &dishAnimBlue );
+  dishAnim.values = dishBlueYellowValues;
+  startPinAnimation( &dishAnim );
 }
 
-void animateDishYellowBlue() {
+void animateDishBlue() {
   // setup values and start/restart the dish animation
-  dishAnimRed.values = dishYellowBlueValuesR;
-  dishAnimGreen.values = dishYellowBlueValuesG;
-  dishAnimBlue.values = dishYellowBlueValuesB;
-  startPinAnimation( &dishAnimRed );
-  startPinAnimation( &dishAnimGreen );
-  startPinAnimation( &dishAnimBlue );
+  dishAnim.values = dishYellowBlueValues;
+  startPinAnimation( &dishAnim );
 }
 
 
@@ -437,14 +429,14 @@ void dishGreen() {
 
 void setImpulseMode() {
    digitalWrite( impulsePin, 255);
-   animateDishBlueYellow();
+   animateDishYellow();
    warpEngineAnim.active = false;
-   analogWrite( warpEngineAnim.pin, 0 );
+   analogWrite( warpEnginePin, 0 );
 }
 
 void setWarpMode() {
    digitalWrite( impulsePin, 0);
-   animateDishYellowBlue();
+   animateDishBlue();
    startPinAnimation( &warpEngineAnim );
    myDFPlayer.play(3); //play SD:/MP3/0003.mp3
 }
@@ -453,10 +445,11 @@ void setWarpMode() {
 // Use only one animations and update it for each torpedo
 
 long photonPinDurations[] ={ 0,  600,  50, 200, -1 };   // timing
-int photonPinValues[] =    { 0,  32,  255, 0,  0 };    // values
+PinValues photonPinValues[] =    { {0},  {32},  {255}, {0},  {0} };    // values
 
 PinAnimation photonPinAnim = {
-  photonLeftPin,      // pin
+  1,                // pinCount
+  {photonLeftPin},      // pin
   false,   // auto repeat
   false,  // digital on/off
   true,   // active
@@ -498,13 +491,13 @@ void launchPhoton() {
   switch( photonState ) {
     case PHOTON_INACTIVE:
       // okay kick off our left photon torpedo animation and update state
-      photonPinAnim.pin = photonLeftPin;
+      photonPinAnim.pins[0] = photonLeftPin;
       startPinAnimation(&photonPinAnim);
       photonState = PHOTON_LEFT;
       myDFPlayer.play(2); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
       break;
     case PHOTON_LEFT:
-      photonPinAnim.pin = photonRightPin;
+      photonPinAnim.pins[0] = photonRightPin;
       startPinAnimation(&photonPinAnim);
       photonState = PHOTON_INACTIVE;
       myDFPlayer.play(2); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
@@ -539,20 +532,17 @@ void enterPreferencesMode() {
 }
 
 bool selectNextPreference() {
-  bool finished = false;
   switch( currentPreference ) {
     case PREF_VOLUME:
       currentPreference = PREF_POWERSAVE;
-      break;
+      return false;
     case PREF_POWERSAVE:
       currentPreference = PREF_RETRO_SOUND;
-      break;
+      return false;
     case PREF_RETRO_SOUND:
-      finished = true;
-      break;
+      return true;
   }
   showPreferenceMode();  
-  return finished;
 }
 
 void showPreferenceMode() {  
@@ -599,9 +589,9 @@ void setup() {
   if( retroSounds == 255 ) retroSounds = 1;         // default value (retrosounds to be used)
 
   // set initial pin values
-  pinMode( navPinAnim.pin, OUTPUT );
+  pinMode( navLightPin, OUTPUT );
   startPinAnimation( &navPinAnim );
-  pinMode( strobePinAnim.pin, OUTPUT );
+  pinMode( strobeLightPin, OUTPUT );
   startPinAnimation( &strobePinAnim );
   pinMode( cabinLightPin, OUTPUT );
   digitalWrite( cabinLightPin , HIGH );
