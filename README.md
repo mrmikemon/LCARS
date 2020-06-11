@@ -23,8 +23,8 @@ The features of the circuit are:
 
 Contents of the repo:
 
-`LCARS-v1.drawio-11.xml` - circuit schematic diagram for the various parts of the model
-`LCARS.ino` - the Ardino sketch source code 'C' with control for various animations, flashing lights and button control.
+* `LCARS-v1.drawio-11.xml` - circuit schematic diagram for the various parts of the model
+* `LCARS.ino` - the Ardino sketch source code 'C' with control for various animations, flashing lights and button control.
 
 ## Work still to be done
 
