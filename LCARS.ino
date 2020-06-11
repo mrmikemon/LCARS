@@ -39,6 +39,16 @@ const int EEPROM_ADDRESS_VOLUME = 0;
 const int EEPROM_ADDRESS_POWERSAVE_MINS = 1;
 const int EEPROM_ADDRESS_RETRO_SOUNDS = 2 ;
 
+
+const int SOUND_INTRO = 1;
+const int SOUND_WARP =  3;
+const int SOUND_PHOTON = 2;
+
+
+const int VOLUME_MAX = 30;
+const int VOLUME_MIN = 0;
+
+
 /*
     On Sequence - sync to star trek theme
 
@@ -375,7 +385,7 @@ PinAnimation warpEngineAnim = {
 
 
 // ---------------- Dish Animations -------------------
-long dishAnimDurations[] = { 0 , 2000, -1 };a
+long dishAnimDurations[] = { 0 , 2000, -1 };
 PinValues dishBlueYellowValues[] = { {0,0,255},  {255,255,0}, {0,0,0} };
 PinValues dishYellowBlueValues[] = { {255,255,0},{0, 0 ,255}, {0,0,0} };
 
@@ -438,7 +448,7 @@ void setWarpMode() {
    digitalWrite( impulsePin, 0);
    animateDishBlue();
    startPinAnimation( &warpEngineAnim );
-   myDFPlayer.play(3); //play SD:/MP3/0003.mp3
+   myDFPlayer.play(SOUND_WARP); //play SD:/MP3/0003.mp3
 }
 
 // ---------------- Photon Torpedo Animations -------------------
@@ -494,13 +504,13 @@ void launchPhoton() {
       photonPinAnim.pins[0] = photonLeftPin;
       startPinAnimation(&photonPinAnim);
       photonState = PHOTON_LEFT;
-      myDFPlayer.play(2); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
+      myDFPlayer.play(SOUND_PHOTON); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
       break;
     case PHOTON_LEFT:
       photonPinAnim.pins[0] = photonRightPin;
       startPinAnimation(&photonPinAnim);
       photonState = PHOTON_INACTIVE;
-      myDFPlayer.play(2); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
+      myDFPlayer.play(SOUND_PHOTON); //play specific mp3 in SD:/0001.mp3; File Name(0~65535)
       break;
     case PHOTON_RIGHT:
     default:
@@ -513,6 +523,7 @@ void enterPowerSaveMode()
 {
   turnOffDish();
   stopPinAnimation( &strobePinAnim );
+  stopPinAnimation( &navPinAnim );
   digitalWrite( cabinLightPin , LOW );
   digitalWrite( spotLightPin, LOW );  
 }
@@ -521,6 +532,7 @@ void exitPowerSaveMode()
 {
   setImpulseMode();
   startPinAnimation( &strobePinAnim );
+  startPinAnimation( &navPinAnim );
   digitalWrite( cabinLightPin , HIGH );
   digitalWrite( spotLightPin, HIGH );
 }
@@ -563,6 +575,38 @@ void selectNextPreferenceValue() {
 
 }
 
+void enterIntro()
+{
+  // play the intro 0001intro.mp3
+  myDFPlayer.play(SOUND_INTRO); //play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)  
+  setImpulseMode();
+  state = STATE_INTRO;
+  timerStart( &stateTimer, 10000, false);
+  timerStart( &powerSaveTimer, powerSaveMinutes*60000, false); 
+}
+
+
+//=================================================================================================
+//
+//  Proposed Demo Mode - Future release
+//
+//=================================================================================================
+
+/*
+    bring on stobes - 3 seconds
+    bring on navigation lights - 2 seconds
+    cabin lights - 2 seconds
+    spot lights
+    dish comes to 1/2 yellow
+    photon torpedos to low intensity - 10% ??
+    left photon torpedo pulse
+    right photon torpedo pulse
+    photon torpedoes to off
+    dish goes to full yellow, impulse engines to full yellow
+    dish goes to 1/2 blue
+    dish does full blue, impulse engines fade, warp engines blue
+*/
+
 
 
 //=================================================================================================
@@ -580,8 +624,8 @@ void setup() {
 
   // restore saved settings from EEPROM
   volume = EEPROM.read( EEPROM_ADDRESS_VOLUME );
-  if( volume == 255 ) volume = 15;          // setup volume to default value 15 (mid volume)
-  
+  if( volume == 255 ) volume = VOLUME_MAX;          // setup volume to default value 
+
   powerSaveMinutes = EEPROM.read( EEPROM_ADDRESS_POWERSAVE_MINS );
   if( powerSaveMinutes == 255 ) powerSaveMinutes = 2;   // default to 2 minutes for power save timer
 
@@ -598,11 +642,6 @@ void setup() {
   digitalWrite( spotLightPin, HIGH );
 
   analogWrite( warpEnginePin, 0 );
-  setImpulseMode();
-
-  buttonInit(&warpButton, warpButtonPin);
-  buttonInit(&photonButton, photonButtonPin);
-  buttonInit(&modeButton, modeButtonPin);
 
   // initialise audio
   mySoftwareSerial.begin(9600);
@@ -616,35 +655,12 @@ void setup() {
   myDFPlayer.volume(volume);    // maximum volume (0-30)
   myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);    // nomal equaliser
   myDFPlayer.outputDevice(DFPLAYER_DEVICE_SD);    // using an SD
-  // play the intro 0001intro.mp3
-  myDFPlayer.play(1); //play specific mp3 in SD:/MP3/0004.mp3; File Name(0~65535)
 
-  state = STATE_INTRO;
-  timerStart( &stateTimer, 10000, false);
-  timerStart( &powerSaveTimer, powerSaveMinutes*60000, false); 
-
-  // startPinAnimation(&photonPinAnim);
-
-//  analogWrite( dishBluePin, 0 );
-//  analogWrite( dishRedPin, 25 );
-//  analogWrite( dishGreenPin, 15 );
-
+  buttonInit(&warpButton, warpButtonPin);
+  buttonInit(&photonButton, photonButtonPin);
+  buttonInit(&modeButton, modeButtonPin);
+  enterIntro();
 }
-
-/*
-    bring on stobes - 3 seconds
-    bring on navigation lights - 2 seconds
-    cabin lights - 2 seconds
-    spot lights
-    dish comes to 1/2 yellow
-    photon torpedos to low intensity - 10% ??
-    left photon torpedo pulse
-    right photon torpedo pulse
-    photon torpedoes to off
-    dish goes to full yellow, impulse engines to full yellow
-    dish goes to 1/2 blue
-    dish does full blue, impulse engines fade, warp engines blue
-*/
 
 //=================================================================================================
 //
@@ -714,7 +730,8 @@ void loop() {
     // we are in powersave, if any buttons pressed, return to idle
     if( modePressed || photonPressed || warpPressed ) {
       exitPowerSaveMode();
-      state = STATE_IDLE;
+      enterIntro();
+
 #ifdef DEBUG
     Serial.println("Powersave->Idle");
 #endif
