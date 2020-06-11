@@ -10,10 +10,10 @@ The electronics circuit diagram provided is for an Ardunino Nano microcontroller
 
 The features of the circuit are:
 
-* Cabin lighting circuit - intended for LED Strips within the model
+* Cabin lighting curcuit - intended for LED Strips within the model
 * Spotlights - a curcuit for illuminating the body of the ship and the famous NCC-1701 ship badge.
 * Navigation Lights - a circuit to control green, red and other navigation lights
-* Strobes - a strobe light circuit for various stobes around the model (as per the movies)
+* Strobes - a strobe light circuit for various strobes around the model (as per the movies)
 * Warp Engine - a circuit for warp engines. Intended to drive LED strips in the warp engines
 * Dish & Crystal lighting - there are 3 RGB circuits for different colour shifts from impulse to warp etc.
 * Photon Torpedoes - 2 circuits for left and right photon torpedo tube LEDS
